@@ -1,0 +1,71 @@
+@page "/"
+@inject IaApiClient IaClient
+@rendermode InteractiveServer
+
+<PageTitle>Laboratorio Sistemas Distribuidos - IA</PageTitle>
+
+<div class="container mt-4">
+    <h2>🔬 Consola de Inferencia Distribuida</h2>
+    <p class="text-muted">Práctica de Comunicación, Nominación y Relojes Lógicos con .NET Aspire 9</p>
+
+    <div class="card p-3 mb-4 shadow-sm">
+        <h5>1. Enviar Tarea de Inferencia</h5>
+        <div class="input-group mb-3">
+            <input @bind="nuevoPrompt" class="form-control" placeholder="Ej: Analizar sentimiento de reseñas..." />
+            <button class="btn btn-primary" @onclick="ProcesarPeticion">Enviar RPC/HTTP</button>
+        </div>
+        <span class="badge bg-secondary p-2" style="width: fit-content;">
+            Reloj Lógico Actual del Cliente: <b>@IaClient.RelojLogicoCliente</b>
+        </span>
+    </div>
+
+    @if (historial.Count > 0)
+    {
+        <h5>2. Registro Causal de Eventos (Lamport)</h5>
+        <table class="table table-bordered table-striped">
+            <thead class="table-dark">
+                <tr>
+                    <th>Reloj Cliente (Envío)</th>
+                    <th>Prompt Enviado</th>
+                    <th>Nodo Servidor</th>
+                    <th>Reloj Servidor</th>
+                    <th>Reloj Cliente Final</th>
+                    <th>Respuesta IA</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in historial)
+                {
+                    <tr>
+                        <td>@item.RelojEnvio</td>
+                        <td>@item.Prompt</td>
+                        <td><span class="badge bg-info text-dark">@item.Respuesta.NodoServidor</span></td>
+                        <td><b>@item.Respuesta.TimestampLogico</b></td>
+                        <td><b class="text-success">@item.RelojPostRecepcion</b></td>
+                        <td>@item.Respuesta.Respuesta</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private string nuevoPrompt = "Clasificar intención de texto con LLM";
+    private List<LogItem> historial = new();
+
+    private async Task ProcesarPeticion()
+    {
+        if (string.IsNullOrWhiteSpace(nuevoPrompt)) return;
+
+        long relojAlEnviar = IaClient.RelojLogicoCliente + 1; // Próximo tick de emisión
+        var respuesta = await IaClient.EnviarInferenciaAsync(nuevoPrompt);
+
+        if (respuesta != null)
+        {
+            historial.Insert(0, new LogItem(relojAlEnviar, nuevoPrompt, respuesta, IaClient.RelojLogicoCliente));
+        }
+    }
+
+    private record LogItem(long RelojEnvio, string Prompt, InferenciaResponse Respuesta, long RelojPostRecepcion);
+}

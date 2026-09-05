@@ -1,0 +1,33 @@
+using System.Net.Http.Json;
+
+namespace DistribuidosIA.Web;
+
+public class IaApiClient(HttpClient httpClient)
+{
+    // Reloj lógico del cliente
+    public long RelojLogicoCliente { get; private set; } = 0;
+
+    public async Task<InferenciaResponse?> EnviarInferenciaAsync(string prompt)
+    {
+        // Evento local: incremento antes de emitir
+        RelojLogicoCliente++;
+
+        var payload = new InferenciaRequest(prompt, RelojLogicoCliente, "Web-Dashboard-Cliente");
+
+        var response = await httpClient.PostAsJsonAsync("/api/inferencia", payload);
+        response.EnsureSuccessStatusCode();
+
+        var resultado = await response.Content.ReadFromJsonAsync<InferenciaResponse>();
+
+        if (resultado != null)
+        {
+            // Regla de Lamport al recibir: max(local, recibido) + 1
+            RelojLogicoCliente = Math.Max(RelojLogicoCliente, resultado.TimestampLogico) + 1;
+        }
+
+        return resultado;
+    }
+}
+
+public record InferenciaRequest(string Prompt, long TimestampLogico, string ClienteId);
+public record InferenciaResponse(string Respuesta, long TimestampLogico, string NodoServidor);
