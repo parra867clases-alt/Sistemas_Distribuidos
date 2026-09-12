@@ -1,0 +1,227 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace SimuladorSOD
+{
+    public partial class Form1 : Form
+    {
+        // 3.4 Pila de Procesadores
+        private List<NodoProcesador> procesadores;
+        private int contadorPid = 1000;
+        private int punteroRoundRobin = 0;
+
+        public Form1()
+        {
+            InitializeComponent();
+            InicializarCluster();
+        }
+
+        private void InicializarCluster()
+        {
+            // Instanciar los 3 nodos de cómputo del clúster
+            procesadores = new List<NodoProcesador>
+            {
+                new NodoProcesador("CPU-01", progresoCpu1, lblEstadoCpu1, btnFallaCpu1),
+                new NodoProcesador("CPU-02", progresoCpu2, lblEstadoCpu2, btnFallaCpu2),
+                new NodoProcesador("CPU-03", progresoCpu3, lblEstadoCpu3, btnFallaCpu3)
+            };
+
+            cmbAlgoritmo.SelectedIndex = 1; // Por defecto: Menor Carga
+            RegistrarLog("Sistema Operativo Distribuido iniciado. Pila de 3 procesadores activa.");
+        }
+
+        private void RegistrarLog(string mensaje)
+        {
+            string tiempo = DateTime.Now.ToString("HH:mm:ss.fff");
+            lstBitacora.Items.Insert(0, $"[{tiempo}] {mensaje}");
+        }
+
+        // 3.5 y 3.10 Algoritmos de Selección y Asignación
+        private NodoProcesador ObtenerSiguienteProcesador()
+        {
+            var nodosVivos = procesadores.Where(p => p.Activo).ToList();
+
+            if (nodosVivos.Count == 0)
+            {
+                RegistrarLog("ERROR CRÍTICO: ¡Todos los procesadores de la pila han caído!");
+                return null;
+            }
+
+            // Opción 1: Round-Robin (Estático)
+            if (cmbAlgoritmo.SelectedIndex == 0)
+            {
+                punteroRoundRobin %= nodosVivos.Count;
+                var nodo = nodosVivos[punteroRoundRobin];
+                punteroRoundRobin++;
+                return nodo;
+            }
+            // Opción 2: Menor Carga / Least Loaded (Dinámico)
+            else
+            {
+                return nodosVivos.OrderBy(p => p.TareasPendientes).First();
+            }
+        }
+
+        private void DespacharTarea()
+        {
+            contadorPid++;
+            string pid = $"PID-{contadorPid}";
+            
+            // Cada tarea simula una carga de trabajo variable (de 2 a 5 segundos)
+            int pesoTarea = new Random().Next(2000, 5000);
+
+            var cpuAsignada = ObtenerSiguienteProcesador();
+            if (cpuAsignada != null)
+            {
+                RegistrarLog($"[DESPACHO] Tarea {pid} (peso: {pesoTarea}ms) asignada a {cpuAsignada.Nombre}");
+                cpuAsignada.EncolarTarea(pid, pesoTarea, RegistrarLog);
+            }
+        }
+
+        // Eventos de botones
+        private void btnEnviarUna_Click(object sender, EventArgs e)
+        {
+            DespacharTarea();
+        }
+
+        private async void btnEnviarRafaga_Click(object sender, EventArgs e)
+        {
+            RegistrarLog(">>> INICIANDO RÁFAGA DE 10 TAREAS <<<");
+            btnEnviarRafaga.Enabled = false;
+
+            for (int i = 0; i < 10; i++)
+            {
+                DespacharTarea();
+                await Task.Delay(250); // Llegada paulatina de tareas al despachador
+            }
+
+            btnEnviarRafaga.Enabled = true;
+        }
+
+        private void btnFallaCpu1_Click(object sender, EventArgs e) => procesadores[0].AlternarFalla(RegistrarLog);
+        private void btnFallaCpu2_Click(object sender, EventArgs e) => procesadores[1].AlternarFalla(RegistrarLog);
+        private void btnFallaCpu3_Click(object sender, EventArgs e) => procesadores[2].AlternarFalla(RegistrarLog);
+    }
+
+    // 3.2 y 3.4 Modelo de Nodo Procesador Concurrente
+    public class NodoProcesador
+    {
+        public string Nombre { get; }
+        public bool Activo { get; private set; } = true;
+        public int TareasPendientes { get; private set; } = 0;
+
+        private readonly ProgressBar progressBar;
+        private readonly Label labelEstado;
+        private readonly Button botonFalla;
+        private readonly Queue<TareaInfo> colaTareas = new Queue<TareaInfo>();
+        private bool procesando = false;
+
+        public NodoProcesador(string nombre, ProgressBar pb, Label lbl, Button btn)
+        {
+            Nombre = nombre;
+            progressBar = pb;
+            labelEstado = lbl;
+            botonFalla = btn;
+        }
+
+        public void EncolarTarea(string pid, int duracionMs, Action<string> log)
+        {
+            lock (colaTareas)
+            {
+                colaTareas.Enqueue(new TareaInfo(pid, duracionMs));
+                TareasPendientes = colaTareas.Count;
+                ActualizarInterfaz();
+            }
+
+            if (!procesando)
+            {
+                _ = ProcesarSiguienteTareaAsync(log);
+            }
+        }
+
+        private async Task ProcesarSiguienteTareaAsync(Action<string> log)
+        {
+            procesando = true;
+
+            while (true)
+            {
+                TareaInfo tareaActual;
+                lock (colaTareas)
+                {
+                    if (colaTareas.Count == 0 || !Activo)
+                    {
+                        procesando = false;
+                        TareasPendientes = colaTareas.Count;
+                        ActualizarInterfaz();
+                        break;
+                    }
+                    tareaActual = colaTareas.Dequeue();
+                    TareasPendientes = colaTareas.Count;
+                }
+
+                ActualizarInterfaz(tareaActual.Pid);
+
+                // Simulación del progreso de ejecución en CPU
+                int pasos = 20;
+                int lapsoPaso = tareaActual.DuracionMs / pasos;
+
+                for (int i = 1; i <= pasos; i++)
+                {
+                    if (!Activo) break; // Si falla a mitad de camino, se corta
+
+                    await Task.Delay(lapsoPaso);
+                    progressBar.Invoke(new Action(() => progressBar.Value = (i * 100) / pasos));
+                }
+
+                if (Activo)
+                {
+                    log($"[COMPLETADA] {tareaActual.Pid} finalizada en {Nombre}");
+                    progressBar.Invoke(new Action(() => progressBar.Value = 0));
+                }
+            }
+        }
+
+        // 3.7 Tolerancia a fallos: simulación Crash-Stop
+        public void AlternarFalla(Action<string> log)
+        {
+            Activo = !Activo;
+
+            if (!Activo)
+            {
+                botonFalla.Text = "Recuperar CPU";
+                botonFalla.BackColor = Color.LightGreen;
+                labelEstado.Text = "ESTADO: CAÍDO (CRASH-STOP)";
+                labelEstado.ForeColor = Color.Red;
+                progressBar.Value = 0;
+                log($"[FALLO CRÍTICO] {Nombre} se desconectó. Ya no admitirá tareas.");
+            }
+            else
+            {
+                botonFalla.Text = "Simular Caída (Fallo)";
+                botonFalla.BackColor = Color.LightCoral;
+                labelEstado.ForeColor = Color.Black;
+                ActualizarInterfaz();
+                log($"[RECUPERACIÓN] {Nombre} se reincorporó a la pila de cómputo.");
+            }
+        }
+
+        private void ActualizarInterfaz(string tareaActiva = null)
+        {
+            if (!Activo) return;
+
+            labelEstado.Invoke(new Action(() =>
+            {
+                if (tareaActiva != null)
+                    labelEstado.Text = $"Ejecutando {tareaActiva} | En cola: {TareasPendientes}";
+                else
+                    labelEstado.Text = $"Cola: {TareasPendientes} | Ocioso";
+            }));
+        }
+
+        private record TareaInfo(string Pid, int DuracionMs);
+    }
+}
